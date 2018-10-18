@@ -1,0 +1,1 @@
+# spanner-hotspot-example
