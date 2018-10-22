@@ -37,7 +37,8 @@ func createDatabase(projectID, instanceID, databaseName string) error {
 		CREATE TABLE UserInfo (
 			ID STRING(36) NOT NULL,
 			Name STRING(255) NOT NULL,
-			Rank INT64 NOT NULL
+			Rank INT64 NOT NULL,
+			ShardNo INT64,
 		) PRIMARY KEY (ID)
 		`,
 		`CREATE INDEX UserInfoRank ON UserInfo(Rank)`,
