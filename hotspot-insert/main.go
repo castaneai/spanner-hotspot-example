@@ -1,46 +1,73 @@
 package main
 
 import (
-	"os"
-	"fmt"
 	"cloud.google.com/go/spanner"
 	"context"
-	"log"
+	"flag"
+	"fmt"
 	"github.com/google/uuid"
+	"log"
+	"math/rand"
+	"os"
 	"strconv"
+	"sync"
 	"time"
 )
+
+const iterationCount = 5000
 
 func main() {
 	if len(os.Args) < 4 {
 		fmt.Printf("Usage: <SPANNER PROJECT ID> <SPANNER INSTANCE ID> <SPANNER DATABASE NAME> <GOROUTINE_COUNT>")
 		return
 	}
+	isShard := flag.Bool("shard", false, "if true, insert random shardNo")
+	flag.Parse()
+	fmt.Printf("set random shardNo: %v\n", *isShard)
+	fmt.Println(flag.NArg(), flag.NFlag())
 
-	projectID := os.Args[1]
-	instanceID := os.Args[2]
-	databaseName := os.Args[3]
-	n, err := strconv.Atoi(os.Args[4])
+	projectID := flag.Arg(0)
+	instanceID := flag.Arg(1)
+	databaseName := flag.Arg(2)
+	n, err := strconv.Atoi(flag.Arg(3))
 	if err != nil {
 		log.Fatalln(err)
 	}
+	rand.Seed(time.Now().UnixNano())
 
+	timeChan := make(chan time.Duration, n*iterationCount)
+
+	wg := new(sync.WaitGroup)
+	fmt.Println("start...")
 	for i := 0; i < n; i++ {
-		go func() {
+		wg.Add(1)
+		fmt.Printf("goroutine %d start\n", i)
+		go func(i int) {
+			defer wg.Done()
 			ctx := context.Background()
-			if err := run(ctx, projectID, instanceID, databaseName); err != nil {
+			if err := run(ctx, projectID, instanceID, databaseName, timeChan, i, *isShard); err != nil {
 				log.Fatalln(err)
 			}
-		}()
+		}(i)
 	}
-	fmt.Printf("start...")
-
-	for {
-		time.Sleep(1 * time.Second)
-	}
+	fmt.Println("waiting...")
+	wg.Wait()
+	fmt.Println("complete!")
+	close(timeChan)
+	fmt.Printf("average time: %v\n", DurationAvg(timeChan).String())
 }
 
-func run(ctx context.Context, projectID, instanceID, databaseName string) error {
+// 平均を返す
+func DurationAvg(d chan time.Duration) time.Duration {
+	var sum time.Duration
+	cnt := len(d)
+	for v := range d {
+		sum += v
+	}
+	return sum / time.Duration(cnt)
+}
+
+func run(ctx context.Context, projectID, instanceID, databaseName string, tch chan time.Duration, goroutineId int, isShard bool) error {
 	dsn := fmt.Sprintf("projects/%s/instances/%s/databases/%s", projectID, instanceID, databaseName)
 
 	client, err := spanner.NewClient(ctx, dsn)
@@ -48,11 +75,23 @@ func run(ctx context.Context, projectID, instanceID, databaseName string) error 
 		return err
 	}
 
-	for {
+	table := "UserInfo"
+	cols := []string{"ID", "Name", "Rank", "ShardNo"}
+	shardNo := 0
+	if isShard {
+		shardNo = rand.Intn(100)
+	}
+
+	for i := 0; i < iterationCount; i++ {
+		start := time.Now()
 		if _, err := client.ReadWriteTransaction(ctx, func(tctx context.Context, tx *spanner.ReadWriteTransaction) error {
 			uid := uuid.Must(uuid.NewRandom()).String()
-			stmt := spanner.NewStatement(fmt.Sprintf("INSERT INTO UserInfo (ID, Name, Rank) VALUES ('%s', '%s', %d)", uid, "test", 1))
-			_, err := tx.Update(tctx, stmt)
+			//stmt := spanner.NewStatement(fmt.Sprintf("INSERT INTO UserInfo (ID, Name, Rank) VALUES ('%s', '%s', %d)", uid, "test", 1))
+			//tx.QueryWithStats(tctx, stmt)
+			m := spanner.Insert(table, cols, []interface{}{uid, "もぷ", 1, shardNo})
+			if err := tx.BufferWrite([]*spanner.Mutation{m}); err != nil {
+				return err
+			}
 			if err != nil {
 				return err
 			}
@@ -60,5 +99,8 @@ func run(ctx context.Context, projectID, instanceID, databaseName string) error 
 		}); err != nil {
 			return err
 		}
+		tch <- time.Since(start)
 	}
+	fmt.Printf("goroutine %d finished\n", goroutineId)
+	return nil
 }

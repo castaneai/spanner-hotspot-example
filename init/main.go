@@ -21,6 +21,9 @@ func main() {
 	if err := createDatabase(projectID, instanceID, databaseName); err != nil {
 		log.Fatalln(err)
 	}
+	fmt.Printf(`db successfully created:
+https://console.cloud.google.com/spanner/instances/%s/databases/%s?project=%s
+`, instanceID, databaseName, projectID)
 }
 
 func createDatabase(projectID, instanceID, databaseName string) error {
@@ -42,5 +45,6 @@ func createDatabase(projectID, instanceID, databaseName string) error {
 		) PRIMARY KEY (ID)
 		`,
 		`CREATE INDEX UserInfoRank ON UserInfo(Rank)`,
+		`CREATE INDEX UserInfoShardNo ON UserInfo(ShardNo)`,
 	})
 }
