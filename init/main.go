@@ -44,7 +44,6 @@ func createDatabase(projectID, instanceID, databaseName string) error {
 			ShardNo INT64,
 		) PRIMARY KEY (ID)
 		`,
-		`CREATE INDEX UserInfoRank ON UserInfo(Rank)`,
 		`CREATE INDEX UserInfoShardNo ON UserInfo(ShardNo)`,
 	})
 }
