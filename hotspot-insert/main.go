@@ -126,11 +126,11 @@ func readWorker(ctx context.Context, projectID, instanceID, databaseName string,
 }
 
 func logger(rch, wch chan time.Duration, done chan struct{}) {
-	fp, err := os.Create(time.Now().Format("20060102150405_") + "exectime.log")
+	fp, err := os.Create(time.Now().Format("20060102150405_") + "exectime.csv")
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fp.WriteString("logged_at,write_avg,write_max,write_min,write_p90,write_p95,write_med,read_avg,read_max,read_min,read_p90,read_p95,read_med\n")
+	fp.WriteString("logged_at,write_avg,write_max,write_min,write_p90,write_p95,write_med,read_avg,read_max,read_min,read_p90,read_p95,read_med,write_count,read_count\n")
 	ws := []float64{}
 	rs := []float64{}
 	ticker := time.NewTicker(10 * time.Second)
@@ -142,18 +142,20 @@ func logger(rch, wch chan time.Duration, done chan struct{}) {
 				rstat := GetStat(rs)
 				columns := []string{
 					time.Now().Format("15:04:05"),
-					time.Duration(wstat.Avg).String(),
-					time.Duration(wstat.Max).String(),
-					time.Duration(wstat.Min).String(),
-					time.Duration(wstat.P90).String(),
-					time.Duration(wstat.P95).String(),
-					time.Duration(wstat.Med).String(),
-					time.Duration(rstat.Avg).String(),
-					time.Duration(rstat.Max).String(),
-					time.Duration(rstat.Min).String(),
-					time.Duration(rstat.P90).String(),
-					time.Duration(rstat.P95).String(),
-					time.Duration(rstat.Med).String(),
+					fmt.Sprintf("%f", float64(time.Duration(wstat.Avg))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(wstat.Max))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(wstat.Min))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(wstat.P90))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(wstat.P95))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(wstat.Med))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(rstat.Avg))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(rstat.Max))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(rstat.Min))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(rstat.P90))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(rstat.P95))/float64(time.Millisecond)),
+					fmt.Sprintf("%f", float64(time.Duration(rstat.Med))/float64(time.Millisecond)),
+					strconv.Itoa(len(ws)),
+					strconv.Itoa(len(rs)),
 				}
 				line := strings.Join(columns, ",")
 				fp.WriteString(line + "\n")

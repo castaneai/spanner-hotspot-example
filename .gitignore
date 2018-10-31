@@ -1,5 +1,7 @@
 .idea/
 *.log
+*.csv
+bin
 
 # Binaries for programs and plugins
 *.exe
