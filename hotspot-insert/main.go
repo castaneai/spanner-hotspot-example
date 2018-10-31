@@ -37,14 +37,21 @@ func main() {
 		log.Fatalln(err)
 	}
 	rand.Seed(time.Now().UnixNano())
+
 	ctx := context.Background()
+	dsn := fmt.Sprintf("projects/%s/instances/%s/databases/%s", projectID, instanceID, databaseName)
+	client, err := spanner.NewClient(ctx, dsn)
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	writeTimeChan := make(chan time.Duration, n*iterationCount)
 	readTimeChan := make(chan time.Duration, n*iterationCount)
 	idChan := make(chan string)
-	done := make(chan struct{})
-	go logger(readTimeChan, writeTimeChan, done)
-	go readWorker(ctx, projectID, instanceID, databaseName, idChan, readTimeChan)
+	doneChan := make(chan struct{})
+
+	go logger(readTimeChan, writeTimeChan, doneChan)
+	go readWorker(ctx, client, idChan, readTimeChan)
 
 	wg := new(sync.WaitGroup)
 	fmt.Println("start...")
@@ -52,7 +59,7 @@ func main() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if err := run(ctx, projectID, instanceID, databaseName, writeTimeChan, i, *isShard, idChan); err != nil {
+			if err := run(ctx, client, writeTimeChan, *isShard, idChan); err != nil {
 				log.Fatalln(err)
 			}
 		}(i)
@@ -61,18 +68,11 @@ func main() {
 	wg.Wait()
 	close(writeTimeChan)
 	close(readTimeChan)
-	close(done)
+	close(doneChan)
 	fmt.Println("complete!")
 }
 
-func run(ctx context.Context, projectID, instanceID, databaseName string, wch chan time.Duration, index int, isShard bool, idch chan string) error {
-	dsn := fmt.Sprintf("projects/%s/instances/%s/databases/%s", projectID, instanceID, databaseName)
-
-	client, err := spanner.NewClient(ctx, dsn)
-	if err != nil {
-		return err
-	}
-
+func run(ctx context.Context, client *spanner.Client, wch chan time.Duration, isShard bool, idCh chan string) error {
 	table := "UserInfo"
 	cols := []string{"ID", "Name", "Rank", "ShardNo"}
 	shardNo := 0
@@ -82,35 +82,25 @@ func run(ctx context.Context, projectID, instanceID, databaseName string, wch ch
 
 	for i := 0; i < iterationCount; i++ {
 		uid := uuid.Must(uuid.NewRandom()).String()
-		idch <- uid
+		idCh <- uid
 		start := time.Now()
 		if _, err := client.ReadWriteTransaction(ctx, func(tctx context.Context, tx *spanner.ReadWriteTransaction) error {
-			//stmt := spanner.NewStatement(fmt.Sprintf("INSERT INTO UserInfo (ID, Name, Rank) VALUES ('%s', '%s', %d)", uid, "test", 1))
-			//tx.QueryWithStats(tctx, stmt)
-			m := spanner.Insert(table, cols, []interface{}{uid, "もぷ", 1, shardNo})
-			if err := tx.BufferWrite([]*spanner.Mutation{m}); err != nil {
-				return err
-			}
-			if err != nil {
+			var muts []*spanner.Mutation
+			muts = append(muts, spanner.Insert(table, cols, []interface{}{uid, "もぷ", 1, shardNo}))
+			if err := tx.BufferWrite(muts); err != nil {
 				return err
 			}
 			return nil
 		}); err != nil {
 			return err
 		}
-		elapsed := time.Since(start)
-		wch <- elapsed
+		wch <- time.Since(start)
 	}
 	return nil
 }
 
-func readWorker(ctx context.Context, projectID, instanceID, databaseName string, idch chan string, rch chan time.Duration) {
-	dsn := fmt.Sprintf("projects/%s/instances/%s/databases/%s", projectID, instanceID, databaseName)
-	client, err := spanner.NewClient(ctx, dsn)
-	if err != nil {
-		log.Fatal(err)
-	}
-	ids := []string{}
+func readWorker(ctx context.Context, client *spanner.Client, idch chan string, rch chan time.Duration) {
+	var ids []string
 	cols := []string{"ID", "Name", "Rank", "ShardNo"}
 	for id := range idch {
 		ids = append(ids, id)
@@ -119,13 +109,12 @@ func readWorker(ctx context.Context, projectID, instanceID, databaseName string,
 			key := spanner.Key{ids[i]}
 			start := time.Now()
 			client.Single().ReadRow(ctx, "UserInfo", key, cols)
-			elapsed := time.Since(start)
-			rch <- elapsed
+			rch <- time.Since(start)
 		}
 	}
 }
 
-func logger(rch, wch chan time.Duration, done chan struct{}) {
+func logger(rch, wch chan time.Duration, doneCh chan struct{}) {
 	fp, err := os.Create(time.Now().Format("20060102150405_") + "exectime.csv")
 	if err != nil {
 		log.Fatalln(err)
@@ -166,7 +155,7 @@ func logger(rch, wch chan time.Duration, done chan struct{}) {
 			rs = append(rs, float64(r))
 		case w := <- wch:
 			ws = append(ws, float64(w))
-		case <- done:
+		case <-doneCh:
 			return
 		}
 	}
