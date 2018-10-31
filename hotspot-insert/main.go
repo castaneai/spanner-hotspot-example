@@ -18,12 +18,11 @@ import (
 	"github.com/montanaflynn/stats"
 )
 
-const iterationCount = 10000
-
 var ids []string
 
 func init() {
 	ids = make([]string, 0)
+
 }
 
 func main() {
@@ -52,13 +51,13 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	writeTimeChan := make(chan time.Duration, n*iterationCount)
-	readTimeChan := make(chan time.Duration, n*iterationCount)
+	writeTimeChan := make(chan time.Duration, n*1000)
+	readTimeChan := make(chan time.Duration, n*1000)
 	doneChan := make(chan struct{})
 	idChan := make(chan string)
 
 	go logger(readTimeChan, writeTimeChan, doneChan)
-	go readWorker(ctx, client, idChan, readTimeChan, n)
+	go readWorker(ctx, client, readTimeChan)
 	go idPopper(idChan)
 
 	wg := new(sync.WaitGroup)
@@ -87,7 +86,7 @@ func run(ctx context.Context, client *spanner.Client, wch chan time.Duration, is
 		shardNo = rand.Intn(100)
 	}
 
-	for i := 0; i < iterationCount; i++ {
+	for {
 		uid := uuid.Must(uuid.NewRandom()).String()
 		idCh <- uid
 		start := time.Now()
@@ -106,17 +105,15 @@ func run(ctx context.Context, client *spanner.Client, wch chan time.Duration, is
 	return nil
 }
 
-func readWorker(ctx context.Context, client *spanner.Client, idch chan string, rch chan time.Duration, n int) {
+func readWorker(ctx context.Context, client *spanner.Client, rch chan time.Duration) {
 	cols := []string{"ID", "Name", "Rank", "ShardNo"}
-	for i := 0; i < n*iterationCount; i++ {
+	for {
 		if len(ids) > 0 {
 			i := rand.Intn(len(ids))
 			key := spanner.Key{ids[i]}
 			start := time.Now()
 			client.Single().ReadRow(ctx, "UserInfo", key, cols)
 			rch <- time.Since(start)
-		} else {
-			i--
 		}
 	}
 }
@@ -166,6 +163,7 @@ func logger(rch, wch chan time.Duration, doneCh chan struct{}) {
 			ws = append(ws, float64(w))
 		case <-doneCh:
 			return
+		default:
 		}
 	}
 }
