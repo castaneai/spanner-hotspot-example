@@ -27,7 +27,7 @@ func main() {
 	}
 	isShard := flag.Bool("shard", false, "if true, insert random shardNo")
 	flag.Parse()
-	fmt.Printf("set random shardNo: %v\n", *isShard)
+	fmt.Fprintf(os.Stderr,"set random shardNo: %v\n", *isShard)
 
 	projectID := flag.Arg(0)
 	instanceID := flag.Arg(1)
@@ -64,12 +64,11 @@ func main() {
 			}
 		}(i)
 	}
-	fmt.Println("waiting...")
 	wg.Wait()
 	close(writeTimeChan)
 	close(readTimeChan)
 	close(doneChan)
-	fmt.Println("complete!")
+	fmt.Fprintln(os.Stderr,"complete!")
 }
 
 func run(ctx context.Context, client *spanner.Client, wch chan time.Duration, isShard bool, idCh chan string) error {
@@ -105,21 +104,19 @@ func readWorker(ctx context.Context, client *spanner.Client, idch chan string, r
 	for id := range idch {
 		ids = append(ids, id)
 		if len(ids) > 0 {
-			i := rand.Intn(len(ids))
-			key := spanner.Key{ids[i]}
-			start := time.Now()
-			client.Single().ReadRow(ctx, "UserInfo", key, cols)
-			rch <- time.Since(start)
+			go func() {
+				i := rand.Intn(len(ids))
+				key := spanner.Key{ids[i]}
+				start := time.Now()
+				client.Single().ReadRow(ctx, "UserInfo", key, cols)
+				rch <- time.Since(start)
+			}()
 		}
 	}
 }
 
 func logger(rch, wch chan time.Duration, doneCh chan struct{}) {
-	fp, err := os.Create(time.Now().Format("20060102150405_") + "exectime.csv")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fp.WriteString("logged_at,write_avg,write_max,write_min,write_p90,write_p95,write_med,read_avg,read_max,read_min,read_p90,read_p95,read_med,write_count,read_count\n")
+	os.Stdout.WriteString("logged_at,write_avg,write_max,write_min,write_p90,write_p95,write_med,read_avg,read_max,read_min,read_p90,read_p95,read_med,write_count,read_count\n")
 	ws := []float64{}
 	rs := []float64{}
 	ticker := time.NewTicker(10 * time.Second)
@@ -147,7 +144,7 @@ func logger(rch, wch chan time.Duration, doneCh chan struct{}) {
 					strconv.Itoa(len(rs)),
 				}
 				line := strings.Join(columns, ",")
-				fp.WriteString(line + "\n")
+				os.Stdout.WriteString(line + "\n")
 				ws = []float64{}
 				rs = []float64{}
 			}
