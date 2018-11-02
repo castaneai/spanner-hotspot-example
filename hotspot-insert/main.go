@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
@@ -44,12 +45,32 @@ func main() {
 	}
 	rand.Seed(time.Now().UnixNano())
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+
 	dsn := fmt.Sprintf("projects/%s/instances/%s/databases/%s", projectID, instanceID, databaseName)
-	client, err := spanner.NewClient(ctx, dsn)
+	conf := spanner.ClientConfig{
+		NumChannels: 100,
+	}
+	client, err := spanner.NewClientWithConfig(ctx, dsn, conf)
+	it := client.Single().Query(ctx, spanner.NewStatement("SELECT 1"))
+	if _, err := it.Next(); err != nil {
+		log.Fatalln(err)
+	}
+	defer client.Close()
 	if err != nil {
 		log.Fatalln(err)
 	}
+	// cancel with SIGINT
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	go func() {
+		select {
+		case sig := <-sigChan:
+			cancel()
+			time.Sleep(5 * time.Second)
+			fmt.Fprintf(os.Stderr, sig.String())
+		}
+	}()
 
 	writeTimeChan := make(chan time.Duration, n*1000)
 	readTimeChan := make(chan time.Duration, n*1000)
@@ -67,7 +88,7 @@ func main() {
 		go func(i int) {
 			defer wg.Done()
 			if err := run(ctx, client, writeTimeChan, *isShard, idChan); err != nil {
-				log.Fatalln(err)
+				fmt.Fprintln(os.Stderr, err)
 			}
 		}(i)
 	}
@@ -88,7 +109,6 @@ func run(ctx context.Context, client *spanner.Client, wch chan time.Duration, is
 
 	for {
 		uid := uuid.Must(uuid.NewRandom()).String()
-		idCh <- uid
 		start := time.Now()
 		if _, err := client.ReadWriteTransaction(ctx, func(tctx context.Context, tx *spanner.ReadWriteTransaction) error {
 			var muts []*spanner.Mutation
@@ -100,6 +120,7 @@ func run(ctx context.Context, client *spanner.Client, wch chan time.Duration, is
 		}); err != nil {
 			return err
 		}
+		idCh <- uid
 		wch <- time.Since(start)
 	}
 	return nil
@@ -112,8 +133,11 @@ func readWorker(ctx context.Context, client *spanner.Client, rch chan time.Durat
 			i := rand.Intn(len(ids))
 			key := spanner.Key{ids[i]}
 			start := time.Now()
-			client.Single().ReadRow(ctx, "UserInfo", key, cols)
-			rch <- time.Since(start)
+			if _, err := client.Single().ReadRow(ctx, "UserInfo", key, cols); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			} else {
+				rch <- time.Since(start)
+			}
 		}
 	}
 }
