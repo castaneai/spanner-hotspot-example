@@ -52,14 +52,15 @@ func main() {
 		NumChannels: 100,
 	}
 	client, err := spanner.NewClientWithConfig(ctx, dsn, conf)
-	it := client.Single().Query(ctx, spanner.NewStatement("SELECT 1"))
-	if _, err := it.Next(); err != nil {
-		log.Fatalln(err)
-	}
-	defer client.Close()
 	if err != nil {
 		log.Fatalln(err)
 	}
+	defer client.Close()
+
+	// for initialize session
+	it := client.Single().Query(ctx, spanner.NewStatement("SELECT 1"))
+	it.Do(func(r *spanner.Row) error { return nil })
+
 	// cancel with SIGINT
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
@@ -110,18 +111,11 @@ func run(ctx context.Context, client *spanner.Client, wch chan time.Duration, is
 	for {
 		uid := uuid.Must(uuid.NewRandom()).String()
 		start := time.Now()
-		if _, err := client.ReadWriteTransaction(ctx, func(tctx context.Context, tx *spanner.ReadWriteTransaction) error {
-			var muts []*spanner.Mutation
-			muts = append(muts, spanner.Insert(table, cols, []interface{}{uid, "もぷ", 1, shardNo}))
-			if err := tx.BufferWrite(muts); err != nil {
-				return err
-			}
-			return nil
-		}); err != nil {
+		if _, err := client.Apply(ctx, []*spanner.Mutation{spanner.Insert(table, cols, []interface{}{uid, "もぷ", 1, shardNo})}); err != nil {
 			return err
 		}
-		idCh <- uid
 		wch <- time.Since(start)
+		idCh <- uid
 	}
 	return nil
 }
